@@ -1,7 +1,10 @@
 from asyncio import Queue, Semaphore
+from asyncio.futures import Future
+from typing import Any
 
 import PageParser
 import debugger
+from FetchPageResult import FetchPageResult
 from HttpClient import HttpClient
 from VisitedUrlCache import VisitedUrlCache
 
@@ -13,14 +16,17 @@ class Crawler:
         self.semaphore = Semaphore(10)
 
     async def run(self, initialUrl: str):
-        from asyncio import create_task, gather
+        await self.fetch_urls([initialUrl])
 
-        urls = [initialUrl]
-        while not len(urls) == 0:
-            debugger.print("Processing new url hunk: ", urls)
-            tasks = [create_task(self.__visit_task(url)) for url in urls]
-            urls = Crawler.__analyze_outcomes(await gather(*tasks, return_exceptions=True))
-            debugger.print("new url bunch: ", urls)
+    async def fetch_urls(self, urls: list):
+        from asyncio import create_task, gather, as_completed
+        debugger.print("Processing new url hunk: ", urls)
+        tasks = [create_task(self.__visit_task(url)) for url in urls]
+        for task_outcome in as_completed(tasks):
+            result = await task_outcome  # The 'await' may raise.
+            debugger.print("next hunk: ", result)
+            if len(result) != 0:
+                await self.fetch_urls(result)
 
     @staticmethod
     def __analyze_outcomes(outcomes: list) -> list:
@@ -43,6 +49,9 @@ class Crawler:
         return self.visited.filter(await self.__fetch_url_links(url))
 
     async def __fetch_url_links(self, url: str) -> list:
-        html = await self.httpClient.fetch_page(url)
-        return PageParser.parse_links(html, url)
+        result: FetchPageResult = await self.httpClient.fetch_page(url)
+        if result is None:
+            return []
+        else:
+            return PageParser.parse_links(result.html, result.getUrl())
 
